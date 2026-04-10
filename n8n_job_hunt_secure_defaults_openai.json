@@ -1,0 +1,616 @@
+{
+  "name": "Job Hunt Agent - OpenAI Secure Defaults",
+  "nodes": [
+    {
+      "id": "01f39433-cddd-46a2-8412-42bec31e86f0",
+      "name": "Manual Trigger",
+      "type": "n8n-nodes-base.manualTrigger",
+      "typeVersion": 1,
+      "position": [
+        0,
+        0
+      ],
+      "parameters": {}
+    },
+    {
+      "id": "7d60c0c0-ddec-4a58-8875-53e8d12f7126",
+      "name": "Workflow Config",
+      "type": "n8n-nodes-base.set",
+      "typeVersion": 1,
+      "position": [
+        240,
+        0
+      ],
+      "parameters": {
+        "keepOnlySet": true,
+        "values": {
+          "string": [
+            {
+              "name": "linkedinSearchUrl",
+              "value": "https://www.linkedin.com/jobs/search/?keywords=AI%20Engineer&location=United%20States&f_WT=2"
+            },
+            {
+              "name": "resumeDocId",
+              "value": "REPLACE_WITH_GOOGLE_DOC_ID"
+            },
+            {
+              "name": "trackerSheetId",
+              "value": "REPLACE_WITH_GOOGLE_SHEET_ID"
+            },
+            {
+              "name": "trackerSheetName",
+              "value": "Sheet1"
+            },
+            {
+              "name": "resumeFolderId",
+              "value": "REPLACE_WITH_PRIVATE_DRIVE_FOLDER_ID"
+            },
+            {
+              "name": "apifyActorId",
+              "value": "REPLACE_WITH_APIFY_LINKEDIN_JOBS_ACTOR"
+            },
+            {
+              "name": "openAiModel",
+              "value": "gpt-4.1-mini"
+            },
+            {
+              "name": "jobsLimit",
+              "value": "100"
+            },
+            {
+              "name": "batchSize",
+              "value": "5"
+            },
+            {
+              "name": "candidateName",
+              "value": "REPLACE_WITH_YOUR_NAME"
+            },
+            {
+              "name": "targetLocation",
+              "value": "United States"
+            }
+          ]
+        }
+      },
+      "notesInFlow": true,
+      "notes": "Defaults applied: OpenAI, private output folder, same tracker columns as the video/transcript. Replace the REPLACE_WITH_* values before first run."
+    },
+    {
+      "id": "a97a1f0b-90b9-40bf-9844-bf8662a70fd9",
+      "name": "Apify - Run LinkedIn Jobs Scraper",
+      "type": "n8n-nodes-base.apify",
+      "typeVersion": 1,
+      "position": [
+        520,
+        0
+      ],
+      "parameters": {
+        "resource": "actor",
+        "operation": "runActorGetDataset",
+        "actorSource": "id",
+        "actorId": "={{$json.apifyActorId}}",
+        "input": "={\"url\":\"{{$json.linkedinSearchUrl}}\",\"scrapeCompany\":true,\"count\":{{$json.jobsLimit}}}"
+      },
+      "credentials": {
+        "apifyOAuth2Api": {
+          "id": "REPLACE",
+          "name": "Apify account"
+        }
+      },
+      "notesInFlow": true,
+      "notes": "Transcript flow uses Apify LinkedIn Jobs scraper to pull jobs from a LinkedIn search URL.\nReplace actor ID with your Apify LinkedIn Jobs scraper actor and reconnect credentials."
+    },
+    {
+      "id": "ab29563a-a848-4169-b43c-8d8ba319a95c",
+      "name": "Loop Over Jobs",
+      "type": "n8n-nodes-base.splitInBatches",
+      "typeVersion": 1,
+      "position": [
+        800,
+        0
+      ],
+      "parameters": {
+        "batchSize": "={{Number($item(0).$node[\"Workflow Config\"].json.batchSize || 5)}}"
+      },
+      "notesInFlow": true,
+      "notes": "The video batches jobs in groups of 5 to avoid overwhelming later steps."
+    },
+    {
+      "id": "9022f4b0-d08f-45f5-94f5-811bef704cf3",
+      "name": "Get Resume Doc",
+      "type": "n8n-nodes-base.googleDocs",
+      "typeVersion": 1,
+      "position": [
+        1080,
+        -180
+      ],
+      "parameters": {
+        "resource": "document",
+        "operation": "get",
+        "documentURL": "={{`https://docs.google.com/document/d/${$item(0).$node['Workflow Config'].json.resumeDocId}/edit`}}"
+      },
+      "credentials": {
+        "googleDocsOAuth2Api": {
+          "id": "REPLACE",
+          "name": "Google Docs account"
+        }
+      },
+      "notesInFlow": true,
+      "notes": "Use a least-privilege Google credential and a dedicated private folder/account."
+    },
+    {
+      "id": "7bf61829-9fd1-4f2e-b3f9-e5e15b4e3ebe",
+      "name": "OpenAI - Relevance Check",
+      "type": "n8n-nodes-base.openAi",
+      "typeVersion": 1,
+      "position": [
+        1320,
+        -20
+      ],
+      "parameters": {
+        "resource": "text",
+        "operation": "message",
+        "model": "={{$item(0).$node['Workflow Config'].json.openAiModel}}",
+        "systemMessage": "You are a helpful intelligent job filtering assistant.",
+        "prompt": "={{`Overview: I am looking for jobs. Your task is to filter them based on the resume below. Return JSON only with keys verdict and reason. If the candidate is a fit return true otherwise false.\\n\\nResume:\\n${$item(0).$node['Get Resume Doc'].json.content || ''}\\n\\nJob Title: ${$json.title || ''}\\nCompany: ${$json.companyName || ''}\\nLocation: ${$json.location || ''}\\nJob Description:\\n${$json.descriptionText || $json.description || ''}`}}",
+        "options": {
+          "responseFormat": "jsonObject"
+        }
+      },
+      "credentials": {
+        "openAiApi": {
+          "id": "REPLACE",
+          "name": "OpenAI account"
+        }
+      },
+      "notesInFlow": true,
+      "notes": "Video uses OpenAI to decide if a job is relevant before tailoring the resume."
+    },
+    {
+      "id": "371612c4-3ec9-4857-b7c5-6f6423e2402b",
+      "name": "If Relevant?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 1,
+      "position": [
+        1560,
+        -20
+      ],
+      "parameters": {
+        "conditions": {
+          "boolean": [
+            {
+              "value1": "={{$json.verdict}}",
+              "operation": "isTrue"
+            }
+          ]
+        }
+      }
+    },
+    {
+      "id": "9125ae1c-86ff-4553-b746-84e3a23fa6b5",
+      "name": "OpenAI - Tailor Resume HTML",
+      "type": "n8n-nodes-base.openAi",
+      "typeVersion": 1,
+      "position": [
+        1800,
+        -20
+      ],
+      "parameters": {
+        "resource": "text",
+        "operation": "message",
+        "model": "={{$item(0).$node['Workflow Config'].json.openAiModel}}",
+        "systemMessage": "You are a helpful intelligent resume writing assistant that drafts high-converting resumes based on jobs.",
+        "prompt": "={{`Customize the provided resume for the job below. Keep it truthful, do not invent experience, and write the output as clean HTML only. Start immediately with HTML.\\n\\nResume:\\n${$item(0).$node['Get Resume Doc'].json.content || ''}\\n\\nJob title: ${$item(0).$node['If Relevant?'].json.title || $json.title || ''}\\nCompany: ${$item(0).$node['If Relevant?'].json.companyName || $json.companyName || ''}\\nDescription:\\n${$item(0).$node['If Relevant?'].json.descriptionText || $json.descriptionText || ''}`}}"
+      },
+      "credentials": {
+        "openAiApi": {
+          "id": "REPLACE",
+          "name": "OpenAI account"
+        }
+      }
+    },
+    {
+      "id": "95031d9a-4b3c-40ea-a541-defc934902f4",
+      "name": "HTML to Markdown",
+      "type": "n8n-nodes-base.markdown",
+      "typeVersion": 1,
+      "position": [
+        2040,
+        -20
+      ],
+      "parameters": {
+        "operation": "htmlToMarkdown",
+        "html": "={{$json.message || $json.text || $json.content || ''}}"
+      },
+      "notesInFlow": true,
+      "notes": "The transcript converts the tailored HTML into markdown before sending text into Google Docs."
+    },
+    {
+      "id": "94c96250-0d41-467e-922d-49dc3d42e738",
+      "name": "Create Resume Doc",
+      "type": "n8n-nodes-base.googleDocs",
+      "typeVersion": 1,
+      "position": [
+        2280,
+        -20
+      ],
+      "parameters": {
+        "resource": "document",
+        "operation": "create",
+        "title": "={{$item(0).$node[\"Workflow Config\"].json.candidateName || \"Candidate\"}} - {{$json.companyName || \"Company\"}} - {{$json.title || \"Role\"}}",
+        "drive": "myDrive",
+        "folderId": "={{$item(0).$node[\"Workflow Config\"].json.resumeFolderId}}"
+      },
+      "credentials": {
+        "googleDocsOAuth2Api": {
+          "id": "REPLACE",
+          "name": "Google Docs account"
+        }
+      },
+      "notesInFlow": true,
+      "notes": "Creates one private Google Doc per relevant job. Point this node at your dedicated private folder only.\nUse a least-privilege Google credential and a dedicated private folder/account."
+    },
+    {
+      "id": "ec3f7cd9-f3f1-40e4-bd69-52dc89bb977c",
+      "name": "Update Resume Doc Text",
+      "type": "n8n-nodes-base.googleDocs",
+      "typeVersion": 1,
+      "position": [
+        2520,
+        -20
+      ],
+      "parameters": {
+        "resource": "document",
+        "operation": "update",
+        "documentId": "={{$json.documentId || $json.id}}",
+        "actionsUi": {
+          "actionFields": [
+            {
+              "action": "insert",
+              "text": "={{$item(0).$node['HTML to Markdown'].json.data || $item(0).$node['HTML to Markdown'].json.markdown || ''}}"
+            }
+          ]
+        }
+      },
+      "credentials": {
+        "googleDocsOAuth2Api": {
+          "id": "REPLACE",
+          "name": "Google Docs account"
+        }
+      },
+      "notesInFlow": true,
+      "notes": "Depending on your n8n version, you may need to switch this node to the HTTP Request + Google Docs batchUpdate approach shown in the video.\nUse a least-privilege Google credential and a dedicated private folder/account."
+    },
+    {
+      "id": "dea70a1b-1a22-4256-b28f-044cf9043df1",
+      "name": "Build Resume URL",
+      "type": "n8n-nodes-base.set",
+      "typeVersion": 1,
+      "position": [
+        2760,
+        -20
+      ],
+      "parameters": {
+        "keepOnlySet": false,
+        "values": {
+          "string": [
+            {
+              "name": "resumeUrl",
+              "value": "={{`https://docs.google.com/document/d/${$json.documentId || $json.id}/edit`}}"
+            }
+          ]
+        }
+      }
+    },
+    {
+      "id": "1577b422-7eee-4ec4-80ac-b6241aac9cda",
+      "name": "Append to Tracker Sheet",
+      "type": "n8n-nodes-base.googleSheets",
+      "typeVersion": 1,
+      "position": [
+        3000,
+        -20
+      ],
+      "parameters": {
+        "operation": "append",
+        "sheetId": "={{$item(0).$node['Workflow Config'].json.trackerSheetId}}",
+        "range": "={{$item(0).$node['Workflow Config'].json.trackerSheetName}}",
+        "columns": {
+          "mappingMode": "defineBelow",
+          "value": [
+            {
+              "column": "job_post_link",
+              "value": "={{$item(0).$node['If Relevant?'].json.link || $item(0).$node['If Relevant?'].json.jobUrl || ''}}"
+            },
+            {
+              "column": "title",
+              "value": "={{$item(0).$node['If Relevant?'].json.title || ''}}"
+            },
+            {
+              "column": "seniority_level",
+              "value": "={{$item(0).$node['If Relevant?'].json.seniorityLevel || ''}}"
+            },
+            {
+              "column": "posted_at",
+              "value": "={{$item(0).$node['If Relevant?'].json.postedAt || ''}}"
+            },
+            {
+              "column": "company_name",
+              "value": "={{$item(0).$node['If Relevant?'].json.companyName || ''}}"
+            },
+            {
+              "column": "website",
+              "value": "={{$item(0).$node['If Relevant?'].json.companyWebsite || ''}}"
+            },
+            {
+              "column": "salary",
+              "value": "={{$item(0).$node['If Relevant?'].json.salary || ''}}"
+            },
+            {
+              "column": "description",
+              "value": "={{$item(0).$node['If Relevant?'].json.descriptionText || ''}}"
+            },
+            {
+              "column": "applicants_count",
+              "value": "={{$item(0).$node['If Relevant?'].json.applicantsCount || ''}}"
+            },
+            {
+              "column": "resume_url",
+              "value": "={{$json.resumeUrl}}"
+            },
+            {
+              "column": "application_url",
+              "value": "={{$item(0).$node['If Relevant?'].json.applyUrl || ''}}"
+            }
+          ]
+        }
+      },
+      "credentials": {
+        "googleSheetsOAuth2Api": {
+          "id": "REPLACE",
+          "name": "Google Sheets account"
+        }
+      },
+      "notesInFlow": true,
+      "notes": "Uses the same tracker idea as the transcript: job post link, title, seniority, posted at, company, website, salary, description, applicants, resume URL, application URL."
+    },
+    {
+      "id": "04ab88d4-4f0d-4fd1-ab98-06481e5d7ac0",
+      "name": "Next Batch",
+      "type": "n8n-nodes-base.noOp",
+      "typeVersion": 1,
+      "position": [
+        3240,
+        -20
+      ],
+      "parameters": {},
+      "notesInFlow": true,
+      "notes": "Connect this back to Loop Over Jobs to continue until all items are processed."
+    },
+    {
+      "id": "d57a15cb-2f3d-4168-88a5-2c5defb735ea",
+      "name": "Skipped Jobs",
+      "type": "n8n-nodes-base.noOp",
+      "typeVersion": 1,
+      "position": [
+        1800,
+        180
+      ],
+      "parameters": {},
+      "notesInFlow": true,
+      "notes": "Jobs marked not relevant end here."
+    },
+    {
+      "id": "28441815-8b21-4633-a30c-239e7980861e",
+      "name": "Setup Checklist",
+      "type": "n8n-nodes-base.stickyNote",
+      "typeVersion": 1,
+      "position": [
+        250,
+        -240
+      ],
+      "parameters": {
+        "width": 600,
+        "height": 220,
+        "content": "## Before first run\n- Replace every `REPLACE_WITH_*` value in **Workflow Config**\n- Reconnect **Apify**, **Google Docs**, **Google Sheets**, and **OpenAI** credentials\n- Use a dedicated **private Google Drive folder** for generated resumes\n- Recommended Google scopes: `drive.file`, `documents`, `gmail.send`\n- Keep resume docs private unless you intentionally add a sharing step"
+      }
+    }
+  ],
+  "connections": {
+    "Manual Trigger": {
+      "main": [
+        [
+          {
+            "node": "Workflow Config",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Workflow Config": {
+      "main": [
+        [
+          {
+            "node": "Apify - Run LinkedIn Jobs Scraper",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Apify - Run LinkedIn Jobs Scraper": {
+      "main": [
+        [
+          {
+            "node": "Loop Over Jobs",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Loop Over Jobs": {
+      "main": [
+        [
+          {
+            "node": "Get Resume Doc",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Next Batch",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Get Resume Doc": {
+      "main": [
+        [
+          {
+            "node": "OpenAI - Relevance Check",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "OpenAI - Relevance Check": {
+      "main": [
+        [
+          {
+            "node": "If Relevant?",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "If Relevant?": {
+      "main": [
+        [
+          {
+            "node": "OpenAI - Tailor Resume HTML",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Skipped Jobs",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "OpenAI - Tailor Resume HTML": {
+      "main": [
+        [
+          {
+            "node": "HTML to Markdown",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "HTML to Markdown": {
+      "main": [
+        [
+          {
+            "node": "Create Resume Doc",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Create Resume Doc": {
+      "main": [
+        [
+          {
+            "node": "Update Resume Doc Text",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Update Resume Doc Text": {
+      "main": [
+        [
+          {
+            "node": "Build Resume URL",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Build Resume URL": {
+      "main": [
+        [
+          {
+            "node": "Append to Tracker Sheet",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Append to Tracker Sheet": {
+      "main": [
+        [
+          {
+            "node": "Loop Over Jobs",
+            "type": "main",
+            "index": 1
+          }
+        ]
+      ]
+    },
+    "Next Batch": {
+      "main": [
+        []
+      ]
+    },
+    "Skipped Jobs": {
+      "main": [
+        [
+          {
+            "node": "Loop Over Jobs",
+            "type": "main",
+            "index": 1
+          }
+        ]
+      ]
+    }
+  },
+  "pinData": {},
+  "meta": {
+    "templateCredsSetupCompleted": false
+  },
+  "settings": {
+    "executionOrder": "v1"
+  },
+  "staticData": null,
+  "tags": [
+    {
+      "name": "job hunt"
+    },
+    {
+      "name": "apify"
+    },
+    {
+      "name": "google docs"
+    },
+    {
+      "name": "google sheets"
+    }
+  ]
+}
